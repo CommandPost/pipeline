@@ -11,14 +11,17 @@ import CoreMedia
 
 
 
-// MARK: - UTILITY FUNCTIONS -
+/// Contains miscellaneous utility methods for processing FCPXML data.
 public struct FCPXMLUtility {
 	
+	// MARK: - Initializing
+	
+	/// Initializer
 	public init() {
 		
 	}
 	
-	// MARK: - Retrieval functions
+	// MARK: - Retrieval Methods
 	
 	/// Returns an array of elements that match specified FCPXML element types.
 	///
@@ -47,7 +50,7 @@ public struct FCPXMLUtility {
 	
 	
 	
-	// MARK: - Time conversion functions
+	// MARK: - Time Conversion Methods
 	
 	/**
 	Creates a CMTime value that represents real time from timecode values.
@@ -63,7 +66,7 @@ public struct FCPXMLUtility {
 	public func CMTimeFrom(timecodeHours: Int, timecodeMinutes: Int, timecodeSeconds: Int, timecodeFrames: Int, frameDuration: CMTime) -> CMTime {
 		
 		let framerate: Double
-		if frameDuration == CMTimeMake(1001, 24000) { // If the framerate is 23.976, make the framerate 24 per SMPTE
+		if frameDuration == CMTimeMake(value: 1001, timescale: 24000) { // If the framerate is 23.976, make the framerate 24 per SMPTE
 			framerate = 24.0
 		} else {
 			framerate = 1 / (frameDuration.seconds)
@@ -80,7 +83,7 @@ public struct FCPXMLUtility {
 		let timescale = Int32(framerate * 1000)
 		let value = Int64(Double(timescale) * totalSeconds)
 		
-		let totalSecondsCMTime = CMTimeMake(value, timescale)
+		let totalSecondsCMTime = CMTimeMake(value: value, timescale: timescale)
 		
 		return totalSecondsCMTime
 	}
@@ -96,16 +99,16 @@ public struct FCPXMLUtility {
 	public func CMTime(fromFCPXMLTime timeString: String) -> CMTime {
 		var timeValues = timeString.components(separatedBy: "/")
 		if timeValues.count > 1 {
-			timeValues[1] = String(timeValues[1].characters.dropLast())
+			timeValues[1] = String(timeValues[1].dropLast())
 			let value = Int64(timeValues[0])!
 			let timescale = Int32(timeValues[1])!
 			
-			return CMTimeMake(value, timescale)
+			return CMTimeMake(value: value, timescale: timescale)
 		} else {
-			timeValues[0] = String(timeValues[0].characters.dropLast())
+			timeValues[0] = String(timeValues[0].dropLast())
 			let value = Int64(timeValues[0])!
 			
-			return CMTimeMake(value, 1)
+			return CMTimeMake(value: value, timescale: 1)
 		}
 	}
 	
@@ -118,8 +121,8 @@ public struct FCPXMLUtility {
 	- returns: The FCPXML time value as a string.
 	*/
 	public func fcpxmlTime(fromCMTime time: CMTime) -> String {
-		let FCPXMLTime = "\(time.value)/\(time.timescale)s"
-		return FCPXMLTime
+		
+		return time.fcpxmlString
 	}
 	
 	
@@ -134,7 +137,7 @@ public struct FCPXMLUtility {
 	public func conform(time: CMTime, toFrameDuration frameDuration: CMTime) -> CMTime {
 		let numberOfFrames = time.seconds / frameDuration.seconds
 		let numberOfFramesRounded = floor(Double(numberOfFrames))
-		let conformedTime = CMTimeMake(Int64(numberOfFramesRounded * Double(frameDuration.value)), frameDuration.timescale)
+		let conformedTime = CMTimeMake(value: Int64(numberOfFramesRounded * Double(frameDuration.value)), timescale: frameDuration.timescale)
 		
 		return conformedTime
 	}
@@ -148,14 +151,13 @@ public struct FCPXMLUtility {
 	
 	- returns: An optional CMTime value of the timecode value.
 	*/
+	@available(*, deprecated, message: "Use sequenceTimecode(fromCounterValue:inSequence:) instead.")
 	public func projectTimecode(fromCounterValue counterValue: CMTime, inProject project: XMLElement) -> CMTime? {
 		
-		guard let projectSequenceNode = project.next else {
-			return nil
-		}
-		
-		let projectSequence = projectSequenceNode as! XMLElement
-		
+        guard let projectSequence = project.fcpxProjectSequence else {
+            return nil
+        }
+        
 		guard let projectSequenceTCStart = projectSequence.fcpxTCStart else {
 			return nil
 		}
@@ -174,14 +176,13 @@ public struct FCPXMLUtility {
 	
 	- returns: An optional CMTime value of the counter time.
 	*/
+	@available(*, deprecated, message: "Use sequenceCounterTime(fromTimecodeValue:inSequence:) instead.")
 	public func projectCounterTime(fromTimecodeValue timecodeValue: CMTime, inProject project: XMLElement) -> CMTime? {
 		
-		// Convert the timecode values to sequence counter time values
-		guard let projectSequenceNode = project.next else {
-			return nil
-		}
-		
-		let projectSequence = projectSequenceNode as! XMLElement
+        // Convert the timecode values to sequence counter time values
+        guard let projectSequence = project.fcpxProjectSequence else {
+            return nil
+        }
 		
 		guard let projectSequenceTCStart = projectSequence.fcpxTCStart else {
 			return nil
@@ -192,6 +193,56 @@ public struct FCPXMLUtility {
 		return counterValue
 		
 	}
+    
+    
+    /**
+     Converts a sequence counter value to the sequence's timecode.
+     
+     - parameter counterValue: The counter value to convert.
+     - parameter project: The sequence to convert against, as an NSXMLElement.
+     
+     - returns: An optional CMTime value of the timecode value.
+     */
+    public func sequenceTimecode(fromCounterValue counterValue: CMTime, inSequence sequence: XMLElement) -> CMTime? {
+        
+        guard sequence.fcpxType == .sequence else {
+            return nil
+        }
+        
+        guard let sequenceTCStart = sequence.fcpxTCStart else {
+            return nil
+        }
+        
+        let timecodeValue = CMTimeAdd(sequenceTCStart, counterValue)
+        
+        return timecodeValue
+    }
+    
+    
+    /**
+     Converts a sequence timecode value to the sequence counter time.
+     
+     - parameter timecodeValue: The timecode value to convert.
+     - parameter sequence: The sequence to convert against, as an NSXMLElement.
+     
+     - returns: An optional CMTime value of the counter time.
+     */
+    public func sequenceCounterTime(fromTimecodeValue timecodeValue: CMTime, inSequence sequence: XMLElement) -> CMTime? {
+        
+        // Convert the timecode values to sequence counter time values
+        guard sequence.fcpxType == .sequence else {
+            return nil
+        }
+        
+        guard let sequenceTCStart = sequence.fcpxTCStart else {
+            return nil
+        }
+        
+        let counterValue = CMTimeSubtract(timecodeValue, sequenceTCStart)
+        
+        return counterValue
+        
+    }
 	
 	/**
 	Converts a local time value to a clip's parent time value. In FCPXML, this would be converting a time value that is in the start value timescale to the offset value timescale.
@@ -205,20 +256,11 @@ public struct FCPXMLUtility {
 	*/
 	public func parentTime(fromLocalTime localTimeValue: CMTime, forClip clip: XMLElement) -> CMTime? {
 		
-		var localInPoint: CMTime
-		
-		if clip.fcpxLocalInPoint != nil {
-			localInPoint = clip.fcpxLocalInPoint!
-		} else {
-			localInPoint = CMTimeMake(0, 2400)
-		}
-		
-		
 		guard let parentInPoint = clip.fcpxParentInPoint else {
 			return nil
 		}
 		
-		let localTimeOffset = CMTimeSubtract(localTimeValue, localInPoint)
+		let localTimeOffset = CMTimeSubtract(localTimeValue, clip.fcpxLocalInPoint)
 		
 		let localTimeAsParentTime = CMTimeAdd(parentInPoint, localTimeOffset)
 		
@@ -238,21 +280,13 @@ public struct FCPXMLUtility {
 	*/
 	public func localTime(fromParentTime parentTimeValue: CMTime, forClip clip: XMLElement) -> CMTime? {
 		
-		var localInPoint: CMTime
-		
-		if clip.fcpxLocalInPoint != nil {
-			localInPoint = clip.fcpxLocalInPoint!
-		} else {
-			localInPoint = CMTimeMake(0, 2400)
-		}
-		
 		guard let parentInPoint = clip.fcpxParentInPoint else {
 			return nil
 		}
 		
 		let parentTimeOffset = CMTimeSubtract(parentTimeValue, parentInPoint)
 		
-		let parentTimeAsLocalTime = CMTimeAdd(localInPoint, parentTimeOffset)
+		let parentTimeAsLocalTime = CMTimeAdd(clip.fcpxLocalInPoint, parentTimeOffset)
 		
 		return parentTimeAsLocalTime
 	}
@@ -319,16 +353,40 @@ public struct FCPXMLUtility {
 		return startTime
 	}
 	
+	/// Returns the clip's parent's equivalent offset timings for the specified in and out times. This is useful for walking up an XMLElement hierarchy in order to get the time values of the clip on the project timeline.
+	///
+	/// - Parameters:
+	///   - inTime: The in time to convert, given as a CMTime value.
+	///   - outTime: The out time to convert, given as a CMTime value.
+	///   - clip: The clip that the time values are from. The parent time values will be drawn from this clip's parent.
+	/// - Returns: A tuple of the converted in time, the converted out time, and the parent XMLElement of the specified clip.
+	public func parentClipTime(forInTime inTime: CMTime, outTime: CMTime, forClip clip: XMLElement) -> (in: CMTime, out: CMTime, parent: XMLElement)? {
+		
+		guard let parentClip = clip.parentElement else {
+			return nil
+		}
+		
+		guard let parentIn = self.parentTime(fromLocalTime: inTime, forClip: parentClip) else {
+			return nil
+		}
+		
+		guard let parentOut = self.parentTime(fromLocalTime: outTime, forClip: parentClip) else {
+			return nil
+		}
+		
+		return (parentIn, parentOut, parentClip)
+	}
 	
 	
-	// MARK: - Other conversion functions
-	/**
-	Converts line breaks in attributes to safe XML entities in an XML file, returning an NSXMLDocument.
 	
-	- parameter XMLDocumentURL: An NSURL pointing to the XML file to convert.
+	// MARK: - Other Conversion Methods
 	
-	- returns: An NSXMLDocument or nil if there was a file read or conversion error.
-	*/
+	/// Converts line breaks in attributes to safe XML entities in an XML file, returning an NSXMLDocument.
+	///
+	/// When text values contain line breaks, such as in markers, Final Cut Pro X exports FCPXML files with the line break as is, not encoded into a valid XML line break character. This function will replace line breaks in _attribute nodes_ in FCPXML files with the &#xA; character entity.
+	///
+	/// - Parameter URL: A URL object pointing to the XML file to convert.
+	/// - Returns: An XMLDocument or nil if there was a file read or conversion error.
 	public func convertLineBreaksInAttributes(inXMLDocumentURL URL: Foundation.URL) -> XMLDocument? {
 		
 		var document: String = ""
@@ -350,7 +408,7 @@ public struct FCPXMLUtility {
 			var newSegment = ""
 			var reachedAttributeEnd = false
 			
-			for (charIndex, char) in segment.characters.enumerated() {
+			for (charIndex, char) in segment.enumerated() {
 				
 				if reachedAttributeEnd == false {
 					
@@ -368,7 +426,7 @@ public struct FCPXMLUtility {
 						
 						newSegment += String(char)
 						
-						if charIndex == segment.characters.count - 1 {
+						if charIndex == segment.count - 1 {
 							skipNextNewLineReplacement = true
 						}
 						
@@ -391,7 +449,7 @@ public struct FCPXMLUtility {
 		
 		do {
 			
-			let newXMLDocument = try XMLDocument(xmlString: newDocument, options: 0)
+			let newXMLDocument = try XMLDocument(xmlString: newDocument, options: [.nodePreserveWhitespace, .nodePrettyPrint, .nodeCompactEmptyElement])
 			
 			return newXMLDocument
 			

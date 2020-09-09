@@ -8,20 +8,18 @@
 
 import Foundation
 
-// MARK: - Definitions
-
 /// Defines the element types that can exist in FCPXML documents.
 public enum FCPXMLElementType: String {
 	/// This element is not from an FCPXML document.
 	case none
 	
-	// MARK: - Sections
+	// MARK: - FCPXML Document Sections
 	/// The `<resources>` element in an FCPXML document.
 	case resourceList = "resources"
 	/// The `<library>` element in an FCPXML document.
 	case library = "library"
 	
-	// MARK: - Resources
+	// MARK: - Resource Elements
 	case assetResource = "asset"
 	case formatResource = "format"
 	case mediaResource = "media"
@@ -29,7 +27,7 @@ public enum FCPXMLElementType: String {
 	case multicamResource
 	case compoundResource
 	
-	// MARK: - Library-level
+	// MARK: - Library-Level Elements
 	case event = "event"
 	case project = "project"
 	case multicamClip = "mc-clip"
@@ -37,18 +35,25 @@ public enum FCPXMLElementType: String {
 	case synchronizedClip = "sync-clip"  // FCPXML v1.6
 	case assetClip = "asset-clip"  // FCPXML v1.6
 	
-	// MARK: - Project-level
+	// MARK: - Project-Level Elements
 	case clip = "clip"
 	case audio = "audio"
 	case video = "video"
 	case gap = "gap"
 	case transition = "transition"
-	case title = "title"
 	case spine = "spine"
 	case audition = "audition"
 	case sequence = "sequence"
+	case title = "title"
+	case param = "param"
+	case caption = "caption"  // FCPXML v1.8
 	
-	// MARK: - Clip annotation
+	// MARK: Text Elements
+	case text = "text"
+	case textStyleDef = "text-style-def"
+	case textStyle = "text-style"
+	
+	// MARK: - Clip Annotations
 	case marker = "marker"
 	case keyword = "keyword"
 	case rating = "rating"
