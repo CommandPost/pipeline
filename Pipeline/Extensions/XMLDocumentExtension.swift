@@ -9,35 +9,93 @@
 import Cocoa
 import CoreMedia
 
-extension XMLDocument: XMLParserDelegate {  //, NSCoding {
+extension XMLDocument {
 	
-	enum FCPXMLDocumentError: Error {
-		case DTDResourceNotFound
-		case DTDResourceUnreadable
+	// MARK: - Initializing XMLDocument Objects
+	
+	/// Initializes a new XMLDocument using the contents of an existing FCPXML file.
+	///
+	/// - Parameter URL: The URL to the FCPXML file.
+	/// - Throws: An error object that, on return, identifies any parsing errors and warnings or connection problems.
+	public convenience init(contentsOfFCPXML URL: Foundation.URL) throws {
+		
+		do {
+			try self.init(contentsOf: URL, options: [.nodePreserveWhitespace, .nodePrettyPrint, .nodeCompactEmptyElement])
+		}
 	}
 	
-	// MARK: - Properties
+	
+	/// Initializes a new XMLDocument as FCPXML.
+	///
+	/// - Parameters:
+	///   - resources: Resources an array of XMLElement objects
+	///   - events: Events as an array of XMLElement objects
+	///   - fcpxmlVersion: The FCPXML version of the document to use.
+	public convenience init(resources: [XMLElement], events: [XMLElement], fcpxmlVersion: String) {
+		
+		self.init()
+		self.documentContentKind = XMLDocument.ContentKind.xml
+		self.characterEncoding = "UTF-8"
+		self.version = "1.0"
+		
+		self.dtd = XMLDTD()
+		self.dtd!.name = "fcpxml"
+		self.isStandalone = false
+		
+		self.setRootElement(XMLElement(name: "fcpxml"))
+		self.fcpxmlVersion = fcpxmlVersion
+		
+		self.add(resourceElements: resources)
+		self.add(events: events)
+		
+	}
+
+	
+	
+	// MARK: - FCPXML Document Properties
 	
 	/// The FCPXML document as a properly formatted string.
 	public var fcpxmlString: String {
-		let formattedData = self.xmlData(withOptions: 131076)
-		let formattedString = NSString(data: formattedData, encoding: String.Encoding.utf8.rawValue)
-		return formattedString as! String
+		let formattedData = self.xmlData(options: [.nodePreserveWhitespace, .nodePrettyPrint, .nodeCompactEmptyElement])
+		if let formattedString = NSString(data: formattedData, encoding: String.Encoding.utf8.rawValue) {
+			return formattedString as String
+		} else {
+			return ""
+		}
 	}
-
-	public var fcpxResourceList: XMLElement? {
+	
+	/// The "fcpxml" element at the root of the XMLDocument
+	public var fcpxmlElement: XMLElement? {
 		get {
-			guard let rootElement = self.rootElement(), rootElement.elements(forName: "resources").count > 0 else {
+			guard let children = self.children else {
 				return nil
 			}
-			return rootElement.elements(forName: "resources")[0]
+			
+			for child in children {
+				let childElement = child as! XMLElement
+				
+				if childElement.name == "fcpxml" {
+					return childElement
+				}
+			}
+			return nil
+		}
+	}
+
+	/// The "resource" element child of the "fcpxml" element.
+	public var fcpxResourceElement: XMLElement? {
+		get {
+			guard let fcpxmlElement = self.fcpxmlElement, fcpxmlElement.elements(forName: "resources").count > 0 else {
+				return nil
+			}
+			return fcpxmlElement.elements(forName: "resources")[0]
 		}
 	}
 	
 	/// An array of all resources in the FCPXML document.
 	public var fcpxResources: [XMLElement] {
 		get {
-			if let resourceNodes = self.fcpxResourceList?.children {
+			if let resourceNodes = self.fcpxResourceElement?.children {
 				return resourceNodes as! [XMLElement]
 			} else {
 				return []
@@ -46,22 +104,21 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	}
 	
 	/// The library XMLElement in the FCPXML document.
-	public var fcpxLibrary: XMLElement? {
+	public var fcpxLibraryElement: XMLElement? {
 		get {
-			guard let rootElement = self.rootElement(), rootElement.elements(forName: "library").count > 0 else {
+			guard let fcpxmlElement = self.fcpxmlElement, fcpxmlElement.elements(forName: "library").count > 0 else {
 				return nil
 			}
-			return rootElement.elements(forName: "library")[0]
+			return fcpxmlElement.elements(forName: "library")[0]
 		}
 	}
 	
 	/// An array of all event elements in the FCPXML document.
 	public var fcpxEvents: [XMLElement] {
 		get {
-			guard let rootElement = self.rootElement(), rootElement.elements(forName: "library").count > 0 else {
+			guard let libraryElement = self.fcpxLibraryElement else {
 				return []
 			}
-			let libraryElement = rootElement.elements(forName: "library")[0]
 			return libraryElement.elements(forName: "event")
 		}
 	}
@@ -129,86 +186,44 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 				
 				let eventChildrenElements = eventChildren as! [XMLElement]
 				
-				clips.append(contentsOf: FCPXMLUtility().filter(fcpxElements: eventChildrenElements, ofTypes: [.assetClip, .compoundClip, .multicamClip, .synchronizedClip]))
+				clips.append(contentsOf: FCPXMLUtility().filter(fcpxElements: eventChildrenElements, ofTypes: [.clip, .assetClip, .compoundClip, .multicamClip, .synchronizedClip]))
 			}
 			return clips
 		}
 	}
 	
-	/// An array of all roles used in the FCPXML document.
-	public var fcpxRoles: [String] {
-		get {
-			if self.fcpxRoleAttributeValues == [] {
-				self.parseFCPXIDsAndRoles()
-			}
-			
-			return self.fcpxRoleAttributeValues
-		}
-	}
-	
-	/// The highest resource ID number used in the FCPXML document.
-	public var fcpxLastResourceID: Int {
-		get {
-			if self.fcpxResourceIDs == [] {
-				self.parseFCPXIDsAndRoles()
-			}
-			
-			if let last = self.fcpxResourceIDs.last {
-				return last
-			}
-			
-			return 0
-		}
-	}
-	
-	/// The highest text style ID number used in the FCPXML document.
-	public var fcpxLastTextStyleID: Int {
-		get {
-			if self.fcpxTextStyleIDs == [] {
-				self.parseFCPXIDsAndRoles()
-			}
-			
-			if let last = self.fcpxTextStyleIDs.last {
-				return last
-			}
-			
-			return 0
-		}
-	}
 	
 	// The FCPXML version number is obtained here, not during parsing. This way, the version number can be checked before parsing, which could break depending on the FCPXML version.
-	public var fcpxmlVersion: Float? {
+	/// The version of FCPXML used in this document.
+	public var fcpxmlVersion: String? {
 		get {
-			guard let children = self.children else {
+			
+			guard let fcpxmlElement = self.fcpxmlElement else {
 				return nil
 			}
 			
-			for child in children {
-				let childElement = child as! XMLElement
-				
-				if childElement.name == "fcpxml" {
-					guard let version = childElement.attribute(forName: "version") else {
-						return nil
-					}
-					
-					let versionNumber = Float(version.stringValue!)
-					
-					return versionNumber
-				}
+			guard let versionAttribute = fcpxmlElement.attribute(forName: "version") else {
+				return nil
 			}
 			
-			return nil
+			guard let versionNumber = versionAttribute.stringValue else {
+				return nil
+			}
+			
+			return versionNumber
+			
 		}
 		
-		set (value){
+		set {
 			
-			if value != nil {
-				let version = XMLNode.attribute(withName: "version", stringValue: String(value!))
-				self.rootElement()?.addAttribute(version as! XMLNode)
+			if newValue != nil {
+				let version = XMLNode.attribute(withName: "version", stringValue: newValue!)
+				self.fcpxmlElement?.addAttribute(version as! XMLNode)
 			} else {
-				self.rootElement()?.removeAttribute(forName: "version")
+				self.fcpxmlElement?.removeAttribute(forName: "version")
 			}
 		}
+
 	}
 	
 	/// The names of all events as a String array.
@@ -290,179 +305,51 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 		}
 	}
 	
-	// MARK: - Private Variables
-	private struct ParsedData {
-		static var resourceIDs = "resourceIDs"
-		static var textStyleIDs = "textStyleIDs"
-		static var roles = "roles"
-	}
-	
-	private var fcpxResourceIDs: [Int] {
-		get {
-			guard (objc_getAssociatedObject(self, &ParsedData.resourceIDs)) != nil else {
-				return []
-			}
-			
-			return objc_getAssociatedObject(self, &ParsedData.resourceIDs) as! [Int]
-		}
-		set {
-			objc_setAssociatedObject(self, &ParsedData.resourceIDs, newValue as [Int], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-		}
-	}
-	
-	private var fcpxTextStyleIDs: [Int] {
-		get {
-			guard (objc_getAssociatedObject(self, &ParsedData.textStyleIDs)) != nil else {
-				return []
-			}
-			
-			return objc_getAssociatedObject(self, &ParsedData.textStyleIDs) as! [Int]
-		}
-		set {
-				objc_setAssociatedObject(self, &ParsedData.textStyleIDs, newValue as [Int], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-		}
-	}
-	
-	private var fcpxRoleAttributeValues: [String] {
-		get {
-			guard (objc_getAssociatedObject(self, &ParsedData.roles)) != nil else {
-				return []
-			}
-			
-			return objc_getAssociatedObject(self, &ParsedData.roles) as! [String]
-		}
-		set {
-			objc_setAssociatedObject(self, &ParsedData.roles, newValue as [String], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-		}
-	}
 	
 	
-	// MARK: - Private Methods
-	private func xmlElementArrayToStringArray(usingXMLArray XMLArray: [XMLElement]) -> [String] {
-		var stringArray: [String] = []
-		for XMLElement in XMLArray {
-			stringArray.append(XMLElement.xmlString)
-		}
-		return stringArray
-	}
+	// MARK: - Roles and IDs
 	
-	private func stringArrayToXMLElementArray(usingStringArray stringArray: [String]) -> [XMLElement] {
-		var XMLElementArray: [XMLElement] = []
-		for stringItem in stringArray {
-			do {
-				XMLElementArray.append(try XMLElement(xmlString: stringItem))
-			} catch {
-				continue
-			}
-		}
-		return XMLElementArray
-	}
-	
-	
-	// MARK: - Initializers
-	
-	/// Initializes a new XMLDocument using the contents of an existing FCPXML file.
+	/// Returns an array of all roles used in the FCPXML document.
 	///
-	/// - Parameter URL: The URL to the FCPXML file.
-	/// - Throws: An error object that, on return, identifies any parsing errors and warnings or connection problems.
-	public convenience init(contentsOfFCPXML URL: Foundation.URL) throws {
+	/// This function parses the entire XML document whenever called. Avoid calling it repeatedly and store the value separately instead.
+	/// - Returns: An array of String values.
+	public func fcpxAllRoles() -> [String] {
+		self.parseFCPXML()
 		
-		do {
-			try self.init(contentsOf: URL, options: 0)
-		} catch {
-			throw error
-		}
+		return self.fcpxRoleAttributeValues
 	}
 	
-	
-	/// Initializes a new XMLDocument as FCPXML.
+	/// Returns the highest resource ID number used in the FCPXML document.
 	///
-	/// - Parameters:
-	///   - resources: Resources an array of XMLElement objects
-	///   - events: Events as an array of XMLElement objects
-	///   - fcpxmlVersion: The FCPXML version of the document to use.
-	public convenience init(resources: [XMLElement], events: [XMLElement], fcpxmlVersion: Float) {
+	/// This function parses the entire XML document whenever called. Avoid calling it repeatedly and store the value separately instead.
+	/// - Returns: An integer value.
+	public func fcpxLastResourceID() -> Int {
+		self.parseFCPXML()
 		
-		self.init()
-		self.documentContentKind = XMLDocument.ContentKind.xml
-		self.characterEncoding = "UTF-8"
-		self.version = "1.0"
-		
-		self.dtd = XMLDTD()
-		self.dtd!.name = "fcpxml"
-		self.isStandalone = false
-		
-		self.setRootElement(XMLElement(name: "fcpxml"))
-		self.fcpxmlVersion = 1.6
-		
-		self.add(resourceElements: resources)
-		self.add(events: events)
-		
-	}
-
-	
-	// MARK: - Parsing Functions
-	
-	/// Parses the resource IDs, text style IDs, and roles, refreshing the fcpxLastResourceID, fcpxLastTextStyleID, and fcpxRoles properties. Call this method when initially loading an FCPXML document and when the IDs or roles change.
-	public func parseFCPXIDsAndRoles() {
-		print("Parsing IDs and Roles...")
-		
-		let xmlParser = XMLParser(data: self.xmlData)
-		xmlParser.delegate = self
-		
-		// Parse the attributes using NSXMLParserDelegate
-		xmlParser.parse()
-		
-		self.fcpxResourceIDs = self.fcpxResourceIDs.sorted()
-		self.fcpxTextStyleIDs = self.fcpxTextStyleIDs.sorted()
-		
-		// Filter out duplicate role values
-		var roles: [String] = []
-		for value in self.fcpxRoleAttributeValues {
-			if roles.contains(value) == false {
-				roles.append(value)
-			}
+		if let last = self.fcpxResourceIDs.last {
+			return last
 		}
-		self.fcpxRoleAttributeValues = roles
+		
+		return 0
 	}
 	
-	
-	/**
-	
-	*/
-	
-	/// An NSXMLParserDelegate function that retrieves the last resource ID and text style ID from an FCPXML file.
+	/// Returns the highest text style ID number used in the FCPXML document.
 	///
-	/// This method should not be called explicitly. Call the method parseFCPXIDsAndRoles() instead.
-	public func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String]) {
+	/// This function parses the entire XML document whenever called. Avoid calling it repeatedly and store the value separately instead.
+	/// - Returns: An integer value.
+	public func fcpxLastTextStyleID() -> Int {
+		self.parseFCPXML()
 		
-		for (key, value) in attributeDict {
-			if key == "id" {
-				
-				if value.substring(to: value.characters.index(value.startIndex, offsetBy: 1)) == "r" { // The first letter of the value is "r" for resource
-					let ID = Int(value.substring(from: value.characters.index(value.startIndex, offsetBy: 1)))
-					if let ID = ID {
-						self.fcpxResourceIDs.append(ID)
-					}
-				}
-				
-				if value.substring(to: value.characters.index(value.startIndex, offsetBy: 2)) == "ts" { // The first two letters of the value are "ts" for text style
-					let ID = Int(value.substring(from: value.characters.index(value.startIndex, offsetBy: 2)))
-					if let ID = ID {
-						self.fcpxTextStyleIDs.append(ID)
-					}
-				}
-				
-			} else if key == "role" {
-				self.fcpxRoleAttributeValues.append(value)
-			}
+		if let last = self.fcpxTextStyleIDs.last {
+			return last
 		}
 		
+		return 0
 	}
 	
 	
+	// MARK: - Retrieving Resources
 	
-	// MARK: - Retrieval Functions
 	/**
 	Returns the resource that matches the given ID string.
 	
@@ -554,17 +441,20 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 
 	
 	
-	// MARK: - Modification Functions
+	// MARK: - Modifying FCPXML Documents
 	
 	/// Adds a resource XMLElement to the FCPXML document.
 	///
 	/// - Parameter resourceElement: The XMLElement of the resource to be added.
 	public func add(resourceElement: XMLElement) {
-		if self.fcpxResourceList == nil {
-			self.rootElement()?.insertChild(XMLElement(name: "resources"), at: 0)
+		if self.fcpxResourceElement == nil {
+			guard let fcpxmlElement = self.fcpxmlElement else {
+				return
+			}
+			fcpxmlElement.insertChild(XMLElement(name: "resources"), at: 0)
 		}
 		
-		self.fcpxResourceList?.addChild(resourceElement)
+		self.fcpxResourceElement?.addChild(resourceElement)
 	}
 	
 	
@@ -583,7 +473,7 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	///
 	/// - Parameter index: The index of the resource within the resources element.
 	public func remove(resourceAtIndex index: Int) {
-		let resource = self.fcpxResourceList?.child(at: index) as! XMLElement
+		let resource = self.fcpxResourceElement?.child(at: index) as! XMLElement
 		guard let resourceID = resource.fcpxID else {
 			return
 		}
@@ -603,13 +493,13 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 			}
 		}
 		
-		self.fcpxResourceList?.removeChild(at: index)
+		self.fcpxResourceElement?.removeChild(at: index)
 	}
 	
 	
 	/// Removes all resources from the FCPXML document.
 	public func removeAllResources() {
-		self.fcpxResourceList?.setChildren(nil)
+		self.fcpxResourceElement?.setChildren(nil)
 	}
 	
 	
@@ -617,11 +507,18 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	///
 	/// - Parameter event: The XMLElement of the event to be added.
 	public func add(event: XMLElement) {
-		if self.fcpxLibrary == nil {
-			self.rootElement()?.addChild(XMLElement(name: "library"))
+		if self.fcpxLibraryElement == nil {
+			guard let fcpxmlElement = self.fcpxmlElement else {
+				return
+			}
+			fcpxmlElement.addChild(XMLElement(name: "library"))
 		}
 		
-		self.fcpxLibrary?.addChild(event)
+		if let lastEvent = self.fcpxEvents.last {
+			self.fcpxLibraryElement?.insertChild(event, at: lastEvent.index + 1)
+		} else {
+			self.fcpxLibraryElement?.insertChild(event, at: 0)
+		}
 	}
 	
 	
@@ -639,14 +536,14 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	///
 	/// - Parameter index: The index of the event within the library element.
 	public func remove(eventAtIndex index: Int) {
-		self.fcpxLibrary?.removeChild(at: index)
+		self.fcpxLibraryElement?.removeChild(at: index)
 	}
 	
 	
 	/// Removes all events from the library.
 	public func removeAllEvents() {
 		for event in self.fcpxEvents {
-			self.fcpxLibrary?.removeChild(at: event.index)
+			self.fcpxLibraryElement?.removeChild(at: event.index)
 		}
 		
 	}
@@ -655,7 +552,7 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	
 	// TODO: Add functions for adding a resource and event clip in one swoop. Also add functions for removing a resource, event clip, and associated clips in a project in one swoop.
 	
-	// MARK: - DTD Functions
+	// MARK: - DTD Methods
 	
 	/// Returns the version numbers of the DTD documents included in this framework bundle.
 	///
@@ -674,17 +571,85 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 		}
 		
 		for url in dtdURLs {
-			let filename = url.deletingPathExtension().lastPathComponent
-			guard filename.hasPrefix("FCPXML_") == true else {
+			guard url.lastPathComponent.hasPrefix("FCPXMLv") == true else {
 				continue
 			}
 			
-			let versionNumber = String(filename.characters.dropFirst(7))
-			
-			versions.append(versionNumber)
+			versions.append(self.fcpxmlDTDVersion(fromFilename: url.lastPathComponent))
 		}
 		
 		return versions
+	}
+	
+	/// Converts a version number string to an FCPXML DTD filename.
+	///
+	/// - Parameters:
+	///   - version: The version number as a String. E.g. 1.6
+	///   - withExtension: True if the return filename should include the .dtd extension.
+	/// - Returns: The FCPXML DTD filename.
+	private func fcpxmlDTDFilename(fromVersion version: String, withExtension: Bool) -> String {
+		let versionUnderscored = version.replacingOccurrences(of: ".", with: "_")
+		var filename = "FCPXMLv" + versionUnderscored
+		if withExtension == true {
+			filename += ".dtd"
+		}
+		return filename
+	}
+	
+	/// Converts an FCPXML DTD filename to a version string.
+	///
+	/// - Parameter filename: The name of the DTD file. It can include or exclude the .dtd extension.
+	/// - Returns: The version string for that filename.
+	private func fcpxmlDTDVersion(fromFilename filename: String) -> String {
+		let filenameWithoutExtension = filename.replacingOccurrences(of: ".dtd", with: "")
+		let filenameUnderscored = filenameWithoutExtension.replacingOccurrences(of: "_", with: ".")
+		let version = filenameUnderscored.suffix(from: filenameUnderscored.index(filenameUnderscored.startIndex, offsetBy: 7))
+		return String(version)
+	}
+	
+	/// Converts a version string to an array of three Int values.
+	///
+	/// - Parameter version: The version string to convert. Can have major, minor, and patch values, each separated by a dot.
+	/// - Returns: An array of three Int values. If three values were not included in the string, the missing values will be 0.
+	public func versionArrayFrom(version: String) -> [Int] {
+		var substringArray = version.split(separator: ".")
+		if substringArray.count == 1 {
+			substringArray.append(contentsOf: ["0","0"])
+		} else if substringArray.count == 2 {
+			substringArray.append("0")
+		}
+		let array = substringArray.map{Int($0) ?? 0}
+		return array
+	}
+	
+	/// Verifies that this document's FCPXML version number is at minimum the specified version.
+	///
+	/// - Parameter minimum: A String of the minimum version. E.g. 1.7.1
+	/// - Returns: True if the document is at least the specified minimum version number.
+	public func versionIs(atMinimum minimum: String) -> Bool {
+		guard let version = self.fcpxmlVersion else {
+			return false
+		}
+		
+		let versionArray = versionArrayFrom(version: version)
+		let minimumArray = versionArrayFrom(version: minimum)
+		
+		if versionArray[0] >= minimumArray[0] {
+			
+			if versionArray[1] >= minimumArray[1] {
+				
+				if versionArray[2] >= minimumArray[2] {
+					return true
+				} else {
+					return false
+				}
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
+		
 	}
 	
 	/// Validates the XMLDocument against the DTD of the latest FCPXML version included in this framework. The XMLDocument is valid if no error is thrown.
@@ -692,7 +657,7 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	/// - Throws: An error describing the reason for the XML being invalid or another error, such as not being able to read or set the associated DTD file.
 	public func validateFCPXMLAgainstLatestVersion() throws {
 		do {
-			try self.validateFCPXMLAgainst(version: "1.6")
+			try self.validateFCPXMLAgainst(version: "1.8")
 		} catch {
 			throw error
 		}
@@ -715,23 +680,23 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 		do {
 			try self.validate()
 		} catch {
-			print("The document is invalid.")
+			print("The document is invalid. It does not conform to the FCPXML v\(version) Document Type Definition.")
 			self.dtd = nil
 			throw error
 		}
 		
-		print("The document is valid.")
+		print("The document conforms to the FCPXML v\(version) Document Type Definition.")
 		self.dtd = nil
 	}
 	
 	
-	/// Sets the XMLDocument's DTD to the specified FCPXML version number. The version number must match a DTD resource included in the bundle with the filename pattern `FCPXML_Y` where Y is the version number.
+	/// Sets the XMLDocument's DTD to the specified FCPXML version number. The version number must match a DTD resource included in the bundle.
 	///
 	/// - Parameter version: The version number as a String.
 	/// - Throws: If the DTD file cannot be read properly, an error is thrown describing the issue.
 	private func setDTDToFCPXML(version: String) throws {
 		do {
-			let resourceName = "FCPXML_" + version
+			let resourceName = self.fcpxmlDTDFilename(fromVersion: version, withExtension: false)
 			do {
 				try self.setDTDToBundleResource(named: resourceName)
 			} catch {
@@ -760,7 +725,7 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 		}
 		
 		do {
-			self.dtd? = try XMLDTD(contentsOf: unwrappedURL, options: 0)
+			self.dtd? = try XMLDTD(contentsOf: unwrappedURL, options: [.nodePreserveWhitespace, .nodePrettyPrint, .nodeCompactEmptyElement])
 		} catch {
 			print("Error reading the DTD file.")
 			throw error
@@ -780,5 +745,109 @@ extension XMLDocument: XMLParserDelegate {  //, NSCoding {
 	}
 	
 	
+	// MARK: - XML Parsing Methods
 	
+	/// Parses the resource IDs, text style IDs, and roles, refreshing the fcpxLastResourceID, fcpxLastTextStyleID, and fcpxRoles properties. Call this method when initially loading an FCPXML document and when the IDs or roles change.
+	public func parseFCPXML() {
+		let xmlParser = XMLParser(data: self.xmlData)
+		let delegate = FCPXMLParserDelegate()
+		
+		xmlParser.delegate = delegate
+		xmlParser.parse()
+		
+		self.fcpxResourceIDs = delegate.resourceIDNumbers
+		self.fcpxTextStyleIDs = delegate.textStyleIDNumbers
+		self.fcpxRoleAttributeValues = delegate.roles
+		
+		return
+	}
+	
+	
+	
+	// MARK: - Private Properties
+	
+	// Since extensions cannot contain stored properties, the properties below are defined as Objective-C associated objects.
+	
+	// A struct that defines stored property types in this extension.
+	private struct ParsedData {
+		static var resourceIDs = "resourceIDs"
+		static var textStyleIDs = "textStyleIDs"
+		static var roles = "roles"
+	}
+	
+	// A stored property for all resource IDs in the FCPXML document.
+	private var fcpxResourceIDs: [Int] {
+		get {
+			guard (objc_getAssociatedObject(self, &ParsedData.resourceIDs)) != nil else {
+				return []
+			}
+			
+			return objc_getAssociatedObject(self, &ParsedData.resourceIDs) as! [Int]
+		}
+		set {
+			objc_setAssociatedObject(self, &ParsedData.resourceIDs, newValue as [Int], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+		}
+	}
+	
+	// A stored property for all text style IDs in the FCPXML document.
+	private var fcpxTextStyleIDs: [Int] {
+		get {
+			guard (objc_getAssociatedObject(self, &ParsedData.textStyleIDs)) != nil else {
+				return []
+			}
+			
+			return objc_getAssociatedObject(self, &ParsedData.textStyleIDs) as! [Int]
+		}
+		set {
+			objc_setAssociatedObject(self, &ParsedData.textStyleIDs, newValue as [Int], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+		}
+	}
+	
+	// A stored property for all roles in the FCPXML document.
+	private var fcpxRoleAttributeValues: [String] {
+		get {
+			guard (objc_getAssociatedObject(self, &ParsedData.roles)) != nil else {
+				return []
+			}
+			
+			return objc_getAssociatedObject(self, &ParsedData.roles) as! [String]
+		}
+		set {
+			objc_setAssociatedObject(self, &ParsedData.roles, newValue as [String], .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+		}
+	}
+	
+	
+	// MARK: - Private Methods
+	private func xmlElementArrayToStringArray(usingXMLArray XMLArray: [XMLElement]) -> [String] {
+		var stringArray: [String] = []
+		for XMLElement in XMLArray {
+			stringArray.append(XMLElement.xmlString)
+		}
+		return stringArray
+	}
+	
+	private func stringArrayToXMLElementArray(usingStringArray stringArray: [String]) -> [XMLElement] {
+		var XMLElementArray: [XMLElement] = []
+		for stringItem in stringArray {
+			do {
+				XMLElementArray.append(try XMLElement(xmlString: stringItem))
+			} catch {
+				continue
+			}
+		}
+		return XMLElementArray
+	}
+	
+	
+	// MARK: - Constants
+	
+	/// Type used to define FCPXML document errors.
+	///
+	/// - DTDResourceNotFound: The DTD resource in the Pipeline framework was not found.
+	/// - DTDResourceUnreadable: The DTD resource in the Pipeline framework was not readable.
+	enum FCPXMLDocumentError: Error {
+		case DTDResourceNotFound
+		case DTDResourceUnreadable
+	}
 }
